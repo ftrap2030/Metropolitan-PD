@@ -5,35 +5,17 @@ import { logger } from './logger.js';
 import { replyUserError, ErrorTypes } from './errorHandler.js';
 import { isBotOwner, getBotMessage } from '../config/bot.js';
 
-/**
- * Read default_member_permissions from a SlashCommandBuilder (or its JSON).
- * @param {import('discord.js').SlashCommandBuilder | object} commandData
- * @returns {bigint | null}
- */
 export function getCommandDefaultPermissions(commandData) {
   const json = commandData?.toJSON?.() ?? commandData;
   const value = json?.default_member_permissions;
-
-  if (value == null || value === '0') {
-    return null;
-  }
-
+  if (value == null || value === '0') return null;
   return BigInt(value);
 }
 
 function normalizeRoleId(role) {
-  if (!role) {
-    return null;
-  }
-
-  if (typeof role === 'string') {
-    return role;
-  }
-
-  if (typeof role === 'object' && role.id) {
-    return role.id;
-  }
-
+  if (!role) return null;
+  if (typeof role === 'string') return role;
+  if (typeof role === 'object' && role.id) return role.id;
   return null;
 }
 
@@ -41,92 +23,50 @@ function isModerationCategory(category) {
   return category?.toLowerCase?.() === 'moderation';
 }
 
-/**
- * Whether a member holds the guild-configured moderator role (config wizard modRole).
- * @param {import('discord.js').GuildMember | null | undefined} member
- * @param {object | null | undefined} guildConfig
- * @returns {boolean}
- */
 export function memberHasConfiguredModeratorRole(member, guildConfig) {
-  if (!member || !guildConfig) {
-    return false;
-  }
-
+  if (!member || !guildConfig) return false;
   const modRoleId = normalizeRoleId(guildConfig.modRole);
-
   return Boolean(modRoleId && member.roles.cache.has(modRoleId));
 }
 
-/**
- * Whether a member may run a moderation command (native Discord perm or configured modRole).
- * @param {import('discord.js').GuildMember | null | undefined} member
- * @param {object | null | undefined} guildConfig
- * @param {bigint | bigint[] | null} [requiredPermissions]
- * @returns {boolean}
- */
+export function memberHasLeoAdminAccess(member, guildConfig) {
+  if (!member || !guildConfig) return false;
+  const leo = guildConfig.leo || {};
+  if (Array.isArray(leo.adminUsers) && leo.adminUsers.map(String).includes(String(member.id))) return true;
+  const adminRoleId = normalizeRoleId(leo.adminRoleId);
+  return Boolean(adminRoleId && member.roles?.cache?.has(adminRoleId));
+}
+
 export function memberHasModerationCommandAccess(member, guildConfig, requiredPermissions = null) {
-  if (!member) {
-    return false;
-  }
-
-  if (member.guild?.ownerId === member.id) {
-    return true;
-  }
-
-  if (member.permissions.has(PermissionFlagsBits.Administrator)) {
-    return true;
-  }
-
-  if (requiredPermissions != null && member.permissions.has(requiredPermissions)) {
-    return true;
-  }
-
+  if (!member) return false;
+  if (member.guild?.ownerId === member.id) return true;
+  if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
+  if (memberHasLeoAdminAccess(member, guildConfig)) return true;
+  if (requiredPermissions != null && member.permissions.has(requiredPermissions)) return true;
   return memberHasConfiguredModeratorRole(member, guildConfig);
 }
 
-/**
- * Whether a guild member satisfies a command's default_member_permissions bitfield.
- * Guild owners always pass. Moderation commands also accept the configured modRole.
- * @param {import('discord.js').GuildMember | null | undefined} member
- * @param {bigint | null} permissionBitfield
- * @param {{ guildConfig?: object | null, commandCategory?: string | null }} [options]
- * @returns {boolean}
- */
 export function memberMeetsCommandPermissions(member, permissionBitfield, options = {}) {
-  if (permissionBitfield == null) {
-    return true;
-  }
-
-  if (!member) {
-    return false;
-  }
+  if (permissionBitfield == null) return true;
+  if (!member) return false;
 
   const { guildConfig = null, commandCategory = null } = options;
-
   if (isModerationCategory(commandCategory)) {
     return memberHasModerationCommandAccess(member, guildConfig, permissionBitfield);
   }
 
-  if (member.guild?.ownerId === member.id) {
-    return true;
-  }
-
+  if (member.guild?.ownerId === member.id) return true;
+  if (memberHasLeoAdminAccess(member, guildConfig)) return true;
   return member.permissions.has(permissionBitfield);
 }
 
-/**
- * Check moderation command access and reply when denied.
- * @returns {Promise<boolean>}
- */
 export async function checkModerationPermissions(
   interaction,
   guildConfig,
   requiredPermissions,
   errorMessage = 'You do not have permission to use this command.'
 ) {
-  if (memberHasModerationCommandAccess(interaction.member, guildConfig, requiredPermissions)) {
-    return true;
-  }
+  if (memberHasModerationCommandAccess(interaction.member, guildConfig, requiredPermissions)) return true;
 
   await replyUserError(interaction, {
     type: ErrorTypes.PERMISSION,
@@ -139,24 +79,14 @@ export async function checkModerationPermissions(
     guildId: interaction.guildId,
     command: interaction.commandName,
   });
-
   return false;
 }
 
-/**
- * Enforce a command's default_member_permissions for prefix (and other non-Discord-gated) invocations.
- * Slash commands are gated by Discord, but prefix commands must mirror the same requirement in code.
- * @returns {Promise<boolean>} true when the member may proceed
- */
 export async function enforceDefaultCommandPermissions(interaction, command, context = {}) {
-  if (isBotOwner(interaction.user?.id)) {
-    return true;
-  }
+  if (isBotOwner(interaction.user?.id)) return true;
 
   const requiredPermissions = getCommandDefaultPermissions(command?.data);
-  if (requiredPermissions == null) {
-    return true;
-  }
+  if (requiredPermissions == null) return true;
 
   const member = interaction.member;
   if (memberMeetsCommandPermissions(member, requiredPermissions, {
@@ -183,20 +113,17 @@ export async function enforceDefaultCommandPermissions(interaction, command, con
     command: commandName,
     requiredPermissions: requiredPermissions.toString(),
   });
-
   return false;
 }
 
-export function isAdmin(member) {
+export function isAdmin(member, guildConfig = null) {
   if (!member) return false;
-  return member.permissions.has(PermissionFlagsBits.Administrator);
+  return member.permissions.has(PermissionFlagsBits.Administrator) || memberHasLeoAdminAccess(member, guildConfig);
 }
 
 export function isModerator(member, guildConfig = null) {
   if (!member) return false;
-  if (memberHasConfiguredModeratorRole(member, guildConfig)) {
-    return true;
-  }
+  if (memberHasLeoAdminAccess(member, guildConfig) || memberHasConfiguredModeratorRole(member, guildConfig)) return true;
   return member.permissions.has([
     PermissionFlagsBits.Administrator,
     PermissionFlagsBits.ManageGuild
@@ -229,12 +156,9 @@ export async function checkUserPermissions(
       context: { source: 'permissionGuard.checkUserPermissions' }
     });
 
-    logger.warn(
-      `[PERMISSION_DENIED] User ${member.id} attempted command ${interaction.commandName} in guild ${interaction.guildId}`
-    );
+    logger.warn(`[PERMISSION_DENIED] User ${member.id} attempted command ${interaction.commandName} in guild ${interaction.guildId}`);
     return false;
   }
-
   return true;
 }
 
@@ -266,12 +190,9 @@ export async function checkBotPermissions(
 
   const permissions = targetChannel.permissionsFor(botMember);
   const missingPerms = [];
-
   const permArray = Array.isArray(requiredPermissions) ? requiredPermissions : [requiredPermissions];
   for (const perm of permArray) {
-    if (!permissions.has(perm)) {
-      missingPerms.push(perm);
-    }
+    if (!permissions.has(perm)) missingPerms.push(perm);
   }
 
   if (missingPerms.length > 0) {
@@ -281,9 +202,7 @@ export async function checkBotPermissions(
       context: { source: 'permissionGuard.checkBotPermissions', subtype: 'bot_permission' }
     });
 
-    logger.warn(
-      `[BOT_PERMISSION_DENIED] Bot missing permissions [${missingPerms.join(', ')}] in channel ${targetChannel.id}`
-    );
+    logger.warn(`[BOT_PERMISSION_DENIED] Bot missing permissions [${missingPerms.join(', ')}] in channel ${targetChannel.id}`);
     return false;
   }
 
@@ -291,7 +210,6 @@ export async function checkBotPermissions(
 }
 
 function hashUserId(userId) {
-
   let hash = 0;
   for (let i = 0; i < userId.length; i++) {
     const char = userId.charCodeAt(i);
@@ -302,9 +220,7 @@ function hashUserId(userId) {
 }
 
 export function auditPermissionCheck(userId, action, allowed, reason = null) {
-
   const userHash = hashUserId(userId);
-
   if (allowed) {
     logger.debug('[PERMISSION_AUDIT] Permission granted', { action, userHash });
   } else {
@@ -320,6 +236,7 @@ export default {
   botHasPermission,
   getCommandDefaultPermissions,
   memberHasConfiguredModeratorRole,
+  memberHasLeoAdminAccess,
   memberHasModerationCommandAccess,
   memberMeetsCommandPermissions,
   checkModerationPermissions,
