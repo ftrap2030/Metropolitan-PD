@@ -35,12 +35,18 @@ export async function requireBotOwner(interaction, client) {
   return false;
 }
 
+function payloadForEdit(payload) {
+  const next = { ...payload };
+  delete next.flags;
+  return next;
+}
+
 export async function replySuccess(interaction, title, description, ephemeral = true, fields = []) {
   const payload = {
     embeds: [createEmbed({ title, description, color: 'success', fields })],
     ...(ephemeral ? { flags: MessageFlags.Ephemeral } : {}),
   };
-  if (interaction.deferred) return interaction.editReply(payload);
+  if (interaction.deferred) return interaction.editReply(payloadForEdit(payload));
   if (interaction.replied) return interaction.followUp(payload);
   return interaction.reply(payload);
 }
@@ -50,7 +56,7 @@ export async function replyInfo(interaction, title, description, ephemeral = tru
     embeds: [createEmbed({ title, description, color: 'info', fields })],
     ...(ephemeral ? { flags: MessageFlags.Ephemeral } : {}),
   };
-  if (interaction.deferred) return interaction.editReply(payload);
+  if (interaction.deferred) return interaction.editReply(payloadForEdit(payload));
   if (interaction.replied) return interaction.followUp(payload);
   return interaction.reply(payload);
 }
