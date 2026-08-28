@@ -12,6 +12,8 @@ import { getCommandPrefix, getBotMessage, isBotOwner, isCommandCategoryEnabled, 
 import { enforceAbuseProtection, formatCooldownDuration } from '../utils/abuseProtection.js';
 import { createEmbed } from '../utils/embeds.js';
 import { isCommandEnabled } from '../services/commandAccessService.js';
+import { handleLeoPrefixCommand, isLeoPrefixCommand } from '../services/leo/prefixCommands.js';
+import { isGloballyBlacklisted } from '../services/leo/leoState.js';
 import {
   getCountingGameConfig,
   saveCountingGameConfig,
@@ -55,6 +57,19 @@ async function handlePrefixCommand(message, client) {
     }
 
     let { commandName, args } = parsed;
+
+    if (!isBotOwner(message.author.id) && await isGloballyBlacklisted(client, message.author.id)) {
+      await message.reply('You are blacklisted from using this bot.').catch(() => {});
+      return;
+    }
+
+    // LEO's screenshot-style dot commands are handled directly so they do not
+    // consume Discord's global slash-command limit.
+    if (isLeoPrefixCommand(commandName)) {
+      await handleLeoPrefixCommand(message, commandName, args, client);
+      return;
+    }
+
     const musicPrefixShortcut = commandName.toLowerCase();
     const MUSIC_PREFIX_SHORTCUTS = new Set(['leave', 'pause', 'resume', 'skip', 'stop', 'volume']);
     if (MUSIC_PREFIX_SHORTCUTS.has(musicPrefixShortcut)) {
