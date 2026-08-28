@@ -21,9 +21,19 @@ async function sendAlert(message, leo, text) {
   if (!channelId) return;
   const channel = message.guild.channels.cache.get(channelId)
     || await message.guild.channels.fetch(channelId).catch(() => null);
-  if (channel?.isTextBased?.()) {
-    await channel.send({ content: text, allowedMentions: { parse: [] } }).catch(() => {});
-  }
+  if (!channel?.isTextBased?.()) return;
+
+  const roleIds = (leo.alertRoleIds || []).slice(0, 3);
+  const userIds = (leo.alertUserIds || []).slice(0, 2);
+  const mentions = [
+    ...roleIds.map((id) => `<@&${id}>`),
+    ...userIds.map((id) => `<@${id}>`),
+  ];
+
+  await channel.send({
+    content: `${mentions.length ? `${mentions.join(' ')}\n` : ''}${text}`,
+    allowedMentions: { roles: roleIds, users: userIds, parse: [] },
+  }).catch(() => {});
 }
 
 export default {
