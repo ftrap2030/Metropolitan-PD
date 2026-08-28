@@ -13,7 +13,8 @@ import { enforceAbuseProtection, formatCooldownDuration } from '../utils/abusePr
 import { createEmbed } from '../utils/embeds.js';
 import { isCommandEnabled } from '../services/commandAccessService.js';
 import { handleLeoPrefixCommand, isLeoPrefixCommand } from '../services/leo/prefixCommands.js';
-import { isGloballyBlacklisted } from '../services/leo/leoState.js';
+import { handleLeoExtendedPrefixCommand, isLeoExtendedPrefixCommand } from '../services/leo/prefixCommandsExtended.js';
+import { isBotBlacklisted, isGloballyBlacklisted, isLeoBypassed } from '../services/leo/leoState.js';
 import {
   getCountingGameConfig,
   saveCountingGameConfig,
@@ -46,25 +47,49 @@ export default {
   }
 };
 
+function parseGuildCommand(message, client, prefix) {
+  const normal = parsePrefixCommand(message.content, prefix);
+  if (normal) return normal;
+
+  // Mentioning the bot can be used in place of the configured prefix.
+  const mentionPattern = new RegExp(`^<@!?${client.user.id}>\\s*`);
+  if (!mentionPattern.test(message.content)) return null;
+  const remainder = message.content.replace(mentionPattern, '').trim();
+  if (!remainder) return null;
+  return parsePrefixCommand(`${prefix}${remainder}`, prefix);
+}
+
 async function handlePrefixCommand(message, client) {
   try {
     const guildConfig = await getGuildConfig(client, message.guild.id);
     const prefix = guildConfig?.prefix || getCommandPrefix();
-    const parsed = parsePrefixCommand(message.content, prefix);
-    
+    const parsed = parseGuildCommand(message, client, prefix);
+
     if (!parsed) {
-      return; 
+      return;
     }
 
     let { commandName, args } = parsed;
 
-    if (!isBotOwner(message.author.id) && await isGloballyBlacklisted(client, message.author.id)) {
-      await message.reply('You are blacklisted from using this bot.').catch(() => {});
+    const bypassed = isBotOwner(message.author.id) || await isLeoBypassed(client, message.author.id);
+    if (!bypassed) {
+      const [globallyBlacklisted, botBlacklisted] = await Promise.all([
+        isGloballyBlacklisted(client, message.author.id),
+        isBotBlacklisted(client, message.author.id),
+      ]);
+      if (globallyBlacklisted || botBlacklisted) {
+        await message.reply('You are blacklisted from using this bot.').catch(() => {});
+        return;
+      }
+    }
+
+    // New LEO commands are checked first so they can override legacy aliases and
+    // remain prefix-only instead of consuming Discord global slash-command slots.
+    if (isLeoExtendedPrefixCommand(commandName)) {
+      await handleLeoExtendedPrefixCommand(message, commandName, args, client);
       return;
     }
 
-    // LEO's screenshot-style dot commands are handled directly so they do not
-    // consume Discord's global slash-command limit.
     if (isLeoPrefixCommand(commandName)) {
       await handleLeoPrefixCommand(message, commandName, args, client);
       return;
@@ -85,10 +110,10 @@ async function handlePrefixCommand(message, client) {
 
     if (!command) {
       logger.warn(`Command not found: ${resolvedCommandName}`);
-      return; 
+      return;
     }
 
-    if (isMaintenanceMode() && !isBotOwner(message.author.id)) {
+    if (isMaintenanceMode() && !bypassed) {
       await message.channel.send({
         embeds: [createEmbed({
           title: 'Maintenance Mode',
@@ -123,7 +148,7 @@ async function handlePrefixCommand(message, client) {
       return;
     }
 
-    if (!(await isCommandEnabled(client, message.guild.id, resolvePrefixAccessKey(command.data, args), command.category))) {
+    if (!bypassed && !(await isCommandEnabled(client, message.guild.id, resolvePrefixAccessKey(command.data, args), command.category))) {
       const embed = createEmbed({
         title: 'Command Disabled',
         description: 'This command has been disabled for this server.',
@@ -133,28 +158,30 @@ async function handlePrefixCommand(message, client) {
       return;
     }
 
-    const mockInteractionForProtection = {
-      guildId: message.guild.id,
-      user: message.author,
-    };
-    const abuseProtection = await enforceAbuseProtection(
-      mockInteractionForProtection,
-      command,
-      resolvedCommandName,
-    );
-    if (!abuseProtection.allowed) {
-      const formattedCooldown = formatCooldownDuration(abuseProtection.remainingMs);
-      const embed = createEmbed({
-        title: 'Command Cooldown',
-        description: `This command is on cooldown. Please wait ${formattedCooldown} before trying again.`,
-        color: 'error',
-      });
-      await message.channel.send({ embeds: [embed] }).catch(() => {});
-      return;
+    if (!bypassed) {
+      const mockInteractionForProtection = {
+        guildId: message.guild.id,
+        user: message.author,
+      };
+      const abuseProtection = await enforceAbuseProtection(
+        mockInteractionForProtection,
+        command,
+        resolvedCommandName,
+      );
+      if (!abuseProtection.allowed) {
+        const formattedCooldown = formatCooldownDuration(abuseProtection.remainingMs);
+        const embed = createEmbed({
+          title: 'Command Cooldown',
+          description: `This command is on cooldown. Please wait ${formattedCooldown} before trying again.`,
+          color: 'error',
+        });
+        await message.channel.send({ embeds: [embed] }).catch(() => {});
+        return;
+      }
     }
 
     logger.info(`Executing prefix command: ${prefix}${commandName} (resolved to ${resolvedCommandName}) by ${message.author.tag}`);
-    
+
     await executePrefixCommand(command, message, args, client, prefix, guildConfig);
   } catch (error) {
     logger.error('Error handling prefix command:', error);
@@ -206,7 +233,7 @@ async function handleLeveling(message, client) {
     }
 
     const levelingConfig = await getLevelingConfig(client, message.guild.id);
-    
+
     if (!levelingConfig?.enabled) {
       return;
     }
@@ -216,9 +243,7 @@ async function handleLeveling(message, client) {
     }
 
     if (levelingConfig.ignoredRoles?.length > 0) {
-      const member = await message.guild.members.fetch(message.author.id).catch(() => {
-        return null;
-      });
+      const member = await message.guild.members.fetch(message.author.id).catch(() => null);
       if (member && member.roles.cache.some(role => levelingConfig.ignoredRoles.includes(role.id))) {
         return;
       }
@@ -258,9 +283,7 @@ async function handleLeveling(message, client) {
     const result = await addXp(client, message.guild, message.member, finalXP);
 
     if (result?.leveledUp) {
-      logger.info(
-        `${message.author.tag} leveled up to level ${result.level} in ${message.guild.name}`
-      );
+      logger.info(`${message.author.tag} leveled up to level ${result.level} in ${message.guild.name}`);
     }
   } catch (error) {
     logger.error('Error handling leveling for message:', error);
