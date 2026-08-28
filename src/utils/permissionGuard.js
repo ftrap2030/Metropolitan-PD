@@ -4,6 +4,7 @@ import { PermissionFlagsBits } from 'discord.js';
 import { logger } from './logger.js';
 import { replyUserError, ErrorTypes } from './errorHandler.js';
 import { isBotOwner, getBotMessage } from '../config/bot.js';
+import { isLeoBypassed } from '../services/leo/leoState.js';
 
 export function getCommandDefaultPermissions(commandData) {
   const json = commandData?.toJSON?.() ?? commandData;
@@ -21,6 +22,14 @@ function normalizeRoleId(role) {
 
 function isModerationCategory(category) {
   return category?.toLowerCase?.() === 'moderation';
+}
+
+async function interactionHasLeoBypass(interaction) {
+  const userId = interaction?.user?.id;
+  if (!userId) return false;
+  if (isBotOwner(userId)) return true;
+  if (!interaction?.client) return false;
+  return isLeoBypassed(interaction.client, userId).catch(() => false);
 }
 
 export function memberHasConfiguredModeratorRole(member, guildConfig) {
@@ -66,6 +75,7 @@ export async function checkModerationPermissions(
   requiredPermissions,
   errorMessage = 'You do not have permission to use this command.'
 ) {
+  if (await interactionHasLeoBypass(interaction)) return true;
   if (memberHasModerationCommandAccess(interaction.member, guildConfig, requiredPermissions)) return true;
 
   await replyUserError(interaction, {
@@ -83,7 +93,7 @@ export async function checkModerationPermissions(
 }
 
 export async function enforceDefaultCommandPermissions(interaction, command, context = {}) {
-  if (isBotOwner(interaction.user?.id)) return true;
+  if (await interactionHasLeoBypass(interaction)) return true;
 
   const requiredPermissions = getCommandDefaultPermissions(command?.data);
   if (requiredPermissions == null) return true;
@@ -147,6 +157,7 @@ export async function checkUserPermissions(
   requiredPermissions,
   errorMessage = 'You do not have permission to use this command.'
 ) {
+  if (await interactionHasLeoBypass(interaction)) return true;
   const member = interaction.member;
 
   if (!member.permissions.has(requiredPermissions)) {
