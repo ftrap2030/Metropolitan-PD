@@ -1,11 +1,17 @@
+import { isLeoCompatibilityPrefixCommand, handleLeoCompatibilityPrefixCommand } from './prefixCompatibilityCommands.js';
 import { isLeoOwnerPrefixCommand, handleLeoOwnerPrefixCommand } from './prefixOwnerCommands.js';
 import { isLeoAdminPrefixCommand, handleLeoAdminPrefixCommand } from './prefixAdminCommands.js';
 
 export function isLeoExtendedPrefixCommand(commandName) {
-  return isLeoOwnerPrefixCommand(commandName) || isLeoAdminPrefixCommand(commandName);
+  return isLeoCompatibilityPrefixCommand(commandName)
+    || isLeoOwnerPrefixCommand(commandName)
+    || isLeoAdminPrefixCommand(commandName);
 }
 
 export async function handleLeoExtendedPrefixCommand(message, commandName, args, client) {
+  if (isLeoCompatibilityPrefixCommand(commandName)) {
+    return handleLeoCompatibilityPrefixCommand(message, commandName, args, client);
+  }
   if (isLeoOwnerPrefixCommand(commandName)) {
     return handleLeoOwnerPrefixCommand(message, commandName, args, client);
   }
