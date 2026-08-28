@@ -3,12 +3,20 @@ import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { Collection } from 'discord.js';
 import { logger } from '../../utils/logger.js';
-import botConfig from '../../config/bot.js';
+import botConfig, { isBotOwner } from '../../config/bot.js';
+import {
+    getDmLogUsers,
+    isBotBlacklisted,
+    isGloballyBlacklisted,
+    isLeoBypassed,
+    isServerAuthorized,
+} from '../../services/leo/leoState.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const MAX_COMMANDS = 100;
 const COMMAND_COUNT_WARN_THRESHOLD = 90;
+const unauthorizedNoticeCooldown = new Map();
 
 function getSubcommandInfo(commandData) {
     const subcommands = [];
@@ -40,6 +48,75 @@ async function getAllFiles(directory, fileList = []) {
     return fileList;
 }
 
+async function safeSecurityReply(interaction, content) {
+    const payload = interaction?._isPrefixCommand ? { content } : { content, flags: 64 };
+    try {
+        if (interaction?.deferred) return await interaction.editReply(payload);
+        if (interaction?.replied) return await interaction.followUp(payload);
+        return await interaction?.reply?.(payload);
+    } catch {
+        return null;
+    }
+}
+
+async function notifyUnauthorizedServer(client, interaction) {
+    const guildId = interaction?.guildId;
+    if (!guildId) return;
+    const cooldownKey = `${guildId}:${interaction?.user?.id || 'unknown'}`;
+    const now = Date.now();
+    if (now - (unauthorizedNoticeCooldown.get(cooldownKey) || 0) < 5 * 60 * 1000) return;
+    unauthorizedNoticeCooldown.set(cooldownKey, now);
+
+    const recipients = await getDmLogUsers(client).catch(() => ({}));
+    for (const userId of Object.keys(recipients || {})) {
+        const user = await client.users.fetch(userId).catch(() => null);
+        if (!user) continue;
+        await user.send(
+            `Security alert: an unauthorized server attempted to use the bot.\n` +
+            `Server: ${interaction.guild?.name || 'Unknown'} (${guildId})\n` +
+            `User: ${interaction.user?.tag || interaction.user?.id || 'Unknown'} (${interaction.user?.id || 'unknown'})\n` +
+            `Command: ${interaction.commandName || 'prefix command'}`
+        ).catch(() => {});
+    }
+}
+
+function applyLeoSecurityWrapper(command, client) {
+    if (!command?.execute || command.__leoSecurityWrapped) return command;
+    const originalExecute = command.execute.bind(command);
+
+    command.execute = async (...args) => {
+        const interaction = args[0];
+        const userId = interaction?.user?.id;
+        const guildId = interaction?.guildId || interaction?.guild?.id;
+
+        if (userId && guildId) {
+            const bypassed = isBotOwner(userId) || await isLeoBypassed(client, userId);
+            if (!bypassed) {
+                const [globalBlocked, botBlocked, serverAuthorized] = await Promise.all([
+                    isGloballyBlacklisted(client, userId),
+                    isBotBlacklisted(client, userId),
+                    isServerAuthorized(client, guildId),
+                ]);
+
+                if (globalBlocked || botBlocked) {
+                    await safeSecurityReply(interaction, 'You are blacklisted from using this bot.');
+                    return;
+                }
+
+                if (!serverAuthorized) {
+                    await safeSecurityReply(interaction, 'This server is not authorized to use this bot.');
+                    await notifyUnauthorizedServer(client, interaction);
+                    return;
+                }
+            }
+        }
+
+        return originalExecute(...args);
+    };
+    command.__leoSecurityWrapped = true;
+    return command;
+}
+
 export async function loadCommands(client) {
     client.commands = new Collection();
     const commandsPath = path.join(__dirname, '../../commands');
@@ -62,6 +139,7 @@ export async function loadCommands(client) {
 
             command.category = command.category || category;
             command.filePath = normalizedPath;
+            applyLeoSecurityWrapper(command, client);
             const primaryCommandName = command.data.name;
 
             if (!uniqueCommandNames.has(primaryCommandName)) {
@@ -213,6 +291,9 @@ export async function reloadCommand(client, commandName) {
         const moduleUrl = pathToFileURL(commandPath);
         moduleUrl.searchParams.set('t', Date.now().toString());
         const newCommand = (await import(moduleUrl.href)).default;
+        newCommand.category = newCommand.category || command.category;
+        newCommand.filePath = command.filePath;
+        applyLeoSecurityWrapper(newCommand, client);
         client.commands.set(commandName, newCommand);
         logger.info(`Reloaded command: ${commandName}`);
         return { success: true, message: `Successfully reloaded command "${commandName}"` };
