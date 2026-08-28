@@ -38,13 +38,19 @@ export function isExplicitAdmin(leo, userId) {
 }
 
 export async function getLeoAccessLevel(message, client, leoConfig = null) {
-  if (isBotOwner(message.author.id) || await isLeoBypassed(client, message.author.id)) return 'owner';
-  const leo = leoConfig || await getLeoGuildConfig(client, message.guild.id);
-  if (message.guild.ownerId === message.author.id) return 'admin';
-  if (message.member?.permissions?.has(PermissionFlagsBits.Administrator)) return 'admin';
-  if (isExplicitAdmin(leo, message.author.id)) return 'admin';
-  if (hasRole(message.member, leo.adminRoleId)) return 'admin';
-  if (hasRole(message.member, leo.roleManagerRoleId)) return 'rolemanager';
+  const userId = message?.author?.id || message?.member?.id;
+  if (isBotOwner(userId) || await isLeoBypassed(client, userId)) return 'owner';
+
+  const guild = message?.guild || message?.member?.guild;
+  if (!guild) return 'user';
+  const member = message?.member || (userId ? await guild.members.fetch(userId).catch(() => null) : null);
+  const leo = leoConfig || await getLeoGuildConfig(client, guild.id);
+
+  if (guild.ownerId === userId) return 'admin';
+  if (member?.permissions?.has(PermissionFlagsBits.Administrator)) return 'admin';
+  if (isExplicitAdmin(leo, userId)) return 'admin';
+  if (hasRole(member, leo.adminRoleId)) return 'admin';
+  if (hasRole(member, leo.roleManagerRoleId)) return 'rolemanager';
   return 'user';
 }
 
