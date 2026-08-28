@@ -1,10 +1,17 @@
-import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-import { successEmbed } from '../../utils/embeds.js';
+import {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    SlashCommandBuilder,
+    PermissionFlagsBits,
+} from 'discord.js';
+import { createEmbed, successEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { ModerationService } from '../../services/moderation/moderationService.js';
 import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { isBotOwner } from '../../config/bot.js';
 import { getLeoGuildConfig, isLeoBypassed, isProtectedUser } from '../../services/leo/leoState.js';
+import { createModerationAppeal } from '../../services/leo/moderationAppealService.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -68,6 +75,32 @@ export default {
             moderator: interaction.member,
             reason,
         });
+
+        try {
+            const appeal = await createModerationAppeal(client, interaction.guildId, {
+                kind: 'ban',
+                targetId: user.id,
+                staffId: interaction.user.id,
+                reason,
+                moderationCaseId: result.caseId || null,
+            });
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`leo_mod_appeal:${interaction.guildId}:${appeal.id}`)
+                    .setLabel('Appeal Ban')
+                    .setStyle(ButtonStyle.Secondary),
+            );
+            await user.send({
+                embeds: [createEmbed({
+                    title: `Ban Appeal — Case #${appeal.id}`,
+                    description: `You were banned from **${interaction.guild.name}**.\n\n**Reason:** ${reason}\n\nUse the button below if you want staff to review this action.`,
+                    color: 'warning',
+                })],
+                components: [row],
+            }).catch(() => {});
+        } catch {
+            // A failed appeal DM/storage write must not undo a successful moderation action.
+        }
 
         await InteractionHelper.universalReply(interaction, {
             embeds: [
