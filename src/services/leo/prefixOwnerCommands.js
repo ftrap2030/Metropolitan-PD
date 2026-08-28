@@ -11,11 +11,9 @@ import {
   getBypassMap,
   isLeoBypassed,
   setLeoBypass,
-  getBotBlacklist,
   setBotBlacklist,
   getDmLogUsers,
   setDmLogUser,
-  getGlobalBlacklist,
   setGlobalBlacklist,
 } from './leoState.js';
 import {
@@ -27,10 +25,12 @@ import {
 } from './commandUtils.js';
 
 const OWNER_COMMANDS = new Set([
-  'hrsystem', 'bypass', 'bypasslist', 'botblacklist', 'unbotblacklist',
-  'dmlog', 'undmlog', 'testwebhook', 'repeat', 'nuke', 'invite',
-  'blacklist', 'unblacklist', 'infractionappealrole', 'w2role', 's1role',
-  's2role', 'termrole', 'activitywatchrole',
+  'adminrole', 'rolemanagerrole', 'joinrole', 'hrsystem',
+  'promotionrole', 'infractionrole', 'infractionappealrole',
+  'w1role', 'w2role', 's1role', 's2role', 'suspensionrole', 'termrole', 'activitywatchrole',
+  'bypass', 'bypasslist', 'botblacklist', 'unbotblacklist',
+  'dmlog', 'undmlog', 'api-key', 'apikey', 'testwebhook', 'repeat', 'nuke',
+  'leave', 'listserver', 'invite', 'restart', 'blacklist', 'unblacklist',
 ]);
 
 async function isOwnerEquivalent(message, client) {
@@ -43,11 +43,11 @@ async function requireOwner(message, client) {
   return false;
 }
 
-async function configureOwnerRole(message, client, key, label, raw) {
+async function configureOwnerRole(message, client, key, label, raw, commandName = null) {
   if (!(await requireOwner(message, client))) return;
   const role = await resolveRole(message.guild, raw);
   if (!role) {
-    await message.reply(`Usage: \`.${key.replace(/RoleId$/, '').toLowerCase()} @role\``).catch(() => {});
+    await message.reply(`Usage: \`.${commandName || key.replace(/RoleId$/, '').toLowerCase()} @role\``).catch(() => {});
     return;
   }
   await patchLeoGuildConfig(client, message.guild.id, { [key]: role.id });
@@ -56,7 +56,6 @@ async function configureOwnerRole(message, client, key, label, raw) {
 
 async function hrSystem(message, client, args) {
   if (!(await requireOwner(message, client))) return;
-  const leo = await getLeoGuildConfig(client, message.guild.id);
   const raw = args[0]?.toLowerCase();
   if (!['on', 'off'].includes(raw)) {
     await message.reply('Usage: `.hrsystem <on/off>`').catch(() => {});
@@ -78,18 +77,14 @@ async function bypass(message, client, args) {
   const map = await getBypassMap(client);
   const enabled = !map[userId];
   await setLeoBypass(client, userId, enabled, { setBy: message.author.id });
-  await sendSuccess(message, 'Bypass Updated', `<@${userId}> ${enabled ? 'now bypasses bot permission, protection, hierarchy, and blacklist checks' : 'no longer bypasses bot checks'}.`);
+  await sendSuccess(message, 'Bypass Updated', `<@${userId}> ${enabled ? 'now bypasses bot permission, protection, hierarchy, whitelist, blacklist, and cooldown checks' : 'no longer bypasses bot checks'}.`);
 }
 
 async function bypassList(message, client) {
   if (!(await requireOwner(message, client))) return;
   const map = await getBypassMap(client);
   const ids = Object.keys(map);
-  await sendLeoEmbed(
-    message,
-    `Bypass List (${ids.length})`,
-    ids.length ? ids.map((id) => `<@${id}> — \`${id}\``).join('\n') : 'No users are currently bypassed.',
-  );
+  await sendLeoEmbed(message, `Bypass List (${ids.length})`, ids.length ? ids.map((id) => `<@${id}> — \`${id}\``).join('\n') : 'No users are currently bypassed.');
 }
 
 async function botBlacklist(message, client, args, enabled) {
@@ -121,9 +116,17 @@ async function dmLog(message, client, args, enabled) {
   await sendSuccess(message, 'Security DM Recipients', `<@${userId}> will ${enabled ? 'now' : 'no longer'} receive protect-trigger and unauthorized-server security DMs.`);
 }
 
-async function listDmLog(message, client) {
-  const map = await getDmLogUsers(client);
-  return Object.keys(map);
+async function apiKey(message, client, args) {
+  if (!(await requireOwner(message, client))) return;
+  const key = args[0]?.trim();
+  if (!key) {
+    await message.reply('Usage: `.api-key <ER:LC server key>`').catch(() => {});
+    return;
+  }
+  await patchLeoGuildConfig(client, message.guild.id, { erlcServerKey: key });
+  await message.delete().catch(() => {});
+  const confirmation = await message.channel.send('ER:LC server key saved securely. The key was not echoed back.').catch(() => null);
+  if (confirmation) setTimeout(() => confirmation.delete().catch(() => {}), 10_000);
 }
 
 async function repeat(message, client, args) {
@@ -146,19 +149,47 @@ async function nuke(message, client) {
     return;
   }
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`leo_nuke:${message.channel.id}:${message.author.id}`)
-      .setLabel('Confirm Nuke')
-      .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId(`leo_nuke_cancel:${message.channel.id}:${message.author.id}`)
-      .setLabel('Cancel')
-      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`leo_nuke:${message.channel.id}:${message.author.id}`).setLabel('Confirm Nuke').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`leo_nuke_cancel:${message.channel.id}:${message.author.id}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
   );
   await message.reply({
     content: 'This will clone this channel and delete the original, wiping its message history. Confirm?',
     components: [row],
   });
+}
+
+async function listServer(message, client) {
+  if (!(await requireOwner(message, client))) return;
+  const guilds = [...client.guilds.cache.values()];
+  const lines = guilds.map((guild, index) => `${index + 1}. **${guild.name}** — \`${guild.id}\` — ${guild.memberCount} members`);
+  const chunks = [];
+  let current = '';
+  for (const line of lines) {
+    if ((current + '\n' + line).length > 3800) {
+      chunks.push(current);
+      current = line;
+    } else {
+      current += `${current ? '\n' : ''}${line}`;
+    }
+  }
+  if (current) chunks.push(current);
+  if (!chunks.length) chunks.push('The bot is not currently in any servers.');
+  for (let i = 0; i < chunks.length; i += 1) {
+    await sendLeoEmbed(message, `Servers (${guilds.length})${chunks.length > 1 ? ` — ${i + 1}/${chunks.length}` : ''}`, chunks[i]);
+  }
+}
+
+async function leaveServer(message, client, args) {
+  if (!(await requireOwner(message, client))) return;
+  const guildId = cleanDiscordId(args[0]) || args[0];
+  const guild = guildId ? client.guilds.cache.get(guildId) : null;
+  if (!guild) {
+    await message.reply('Usage: `.leave <guild_id>` — the bot must currently be in that server.').catch(() => {});
+    return;
+  }
+  const name = guild.name;
+  await message.reply(`Leaving **${name}** (\`${guild.id}\`).`).catch(() => {});
+  await guild.leave();
 }
 
 async function invite(message, client, args) {
@@ -184,6 +215,12 @@ async function invite(message, client, args) {
     reason: `Short-lived owner invite requested by ${message.author.tag}`,
   });
   await message.reply(`Short-lived invite for **${guild.name}** (5 minutes, 1 use): ${created.url}`).catch(() => {});
+}
+
+async function restart(message, client) {
+  if (!(await requireOwner(message, client))) return;
+  await message.reply('Restarting the bot process…').catch(() => {});
+  setTimeout(() => process.exit(0), 750);
 }
 
 async function globalBlacklist(message, client, args, enabled) {
@@ -253,28 +290,43 @@ export async function handleLeoOwnerPrefixCommand(message, commandName, args, cl
   const name = String(commandName || '').toLowerCase();
   if (!OWNER_COMMANDS.has(name)) return false;
   switch (name) {
+    case 'adminrole': await configureOwnerRole(message, client, 'adminRoleId', 'Admin Role', args[0], 'adminrole'); break;
+    case 'rolemanagerrole': await configureOwnerRole(message, client, 'roleManagerRoleId', 'Role Manager Role', args[0], 'rolemanagerrole'); break;
+    case 'joinrole': await configureOwnerRole(message, client, 'joinRoleId', 'Join Role', args[0], 'joinrole'); break;
     case 'hrsystem': await hrSystem(message, client, args); break;
+    case 'promotionrole': await configureOwnerRole(message, client, 'promotionRoleId', 'Promotion Role', args[0], 'promotionrole'); break;
+    case 'infractionrole': await configureOwnerRole(message, client, 'infractionRoleId', 'Infraction Role', args[0], 'infractionrole'); break;
+    case 'infractionappealrole': await configureOwnerRole(message, client, 'infractionAppealRoleId', 'Infraction Appeal Role', args[0], 'infractionappealrole'); break;
+    case 'w1role': await configureOwnerRole(message, client, 'w1RoleId', 'W1 Role', args[0], 'w1role'); break;
+    case 'w2role': await configureOwnerRole(message, client, 'w2RoleId', 'W2 Role', args[0], 'w2role'); break;
+    case 's1role': await configureOwnerRole(message, client, 's1RoleId', 'S1 Role', args[0], 's1role'); break;
+    case 's2role': await configureOwnerRole(message, client, 's2RoleId', 'S2 Role', args[0], 's2role'); break;
+    case 'suspensionrole': await configureOwnerRole(message, client, 'suspensionRoleId', 'Suspension Role', args[0], 'suspensionrole'); break;
+    case 'termrole': await configureOwnerRole(message, client, 'termRoleId', 'Termination Role', args[0], 'termrole'); break;
+    case 'activitywatchrole': await configureOwnerRole(message, client, 'activityWatchRoleId', 'Activity Watch Role', args[0], 'activitywatchrole'); break;
     case 'bypass': await bypass(message, client, args); break;
     case 'bypasslist': await bypassList(message, client); break;
     case 'botblacklist': await botBlacklist(message, client, args, true); break;
     case 'unbotblacklist': await botBlacklist(message, client, args, false); break;
     case 'dmlog': await dmLog(message, client, args, true); break;
     case 'undmlog': await dmLog(message, client, args, false); break;
+    case 'api-key':
+    case 'apikey': await apiKey(message, client, args); break;
     case 'repeat': await repeat(message, client, args); break;
     case 'nuke': await nuke(message, client); break;
+    case 'listserver': await listServer(message, client); break;
+    case 'leave': await leaveServer(message, client, args); break;
     case 'invite': await invite(message, client, args); break;
+    case 'restart': await restart(message, client); break;
     case 'blacklist': await globalBlacklist(message, client, args, true); break;
     case 'unblacklist': await globalBlacklist(message, client, args, false); break;
     case 'testwebhook': await testWebhook(message, client); break;
-    case 'infractionappealrole': await configureOwnerRole(message, client, 'infractionAppealRoleId', 'Infraction Appeal Role', args[0]); break;
-    case 'w2role': await configureOwnerRole(message, client, 'w2RoleId', 'W2 Role', args[0]); break;
-    case 's1role': await configureOwnerRole(message, client, 's1RoleId', 'S1 Role', args[0]); break;
-    case 's2role': await configureOwnerRole(message, client, 's2RoleId', 'S2 Role', args[0]); break;
-    case 'termrole': await configureOwnerRole(message, client, 'termRoleId', 'Termination Role', args[0]); break;
-    case 'activitywatchrole': await configureOwnerRole(message, client, 'activityWatchRoleId', 'Activity Watch Role', args[0]); break;
     default: return false;
   }
   return true;
 }
 
-export { listDmLog };
+export async function listDmLog(message, client) {
+  const map = await getDmLogUsers(client);
+  return Object.keys(map);
+}
