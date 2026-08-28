@@ -11,23 +11,22 @@ import { logger } from '../utils/logger.js';
 export default {
   name: Events.GuildMemberAdd,
   once: false,
-  
+
   async execute(member) {
     try {
         const { guild, user } = member;
-        
+
         const config = await getGuildConfig(member.client, guild.id);
-        
+        const leo = config?.leo || {};
+
         const welcomeConfig = await getWelcomeConfig(member.client, guild.id);
-        
+
         const welcomeChannelId = welcomeConfig?.channelId;
 
         if (welcomeConfig?.enabled && welcomeChannelId) {
             const channel = guild.channels.cache.get(welcomeChannelId);
             const me = guild.members.me;
             const permissions = channel?.isTextBased?.() && me ? channel.permissionsFor(me) : null;
-            // Skip only the welcome message if permissions are missing; the rest of the
-            // join pipeline (auto-role, verification, logging, counters) must still run.
             if (permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
                 const formatData = { user, guild, member };
                 const welcomeMessage = formatWelcomeMessage(
@@ -38,7 +37,7 @@ export default {
                 const messageContent = welcomeConfig.welcomePing ? user.toString() : null;
 
                 const embedTitle = formatWelcomeMessage(
-                    welcomeConfig.welcomeEmbed?.title || '🎉 Welcome!',
+                    welcomeConfig.welcomeEmbed?.title || 'Welcome!',
                     formatData
                 );
                 const embedFooter = welcomeConfig.welcomeEmbed?.footer
@@ -48,9 +47,7 @@ export default {
                 const canEmbed = permissions.has(PermissionFlagsBits.EmbedLinks);
 
                 if (!canEmbed) {
-                    await channel.send({
-                        content: messageContent || welcomeMessage
-                    });
+                    await channel.send({ content: messageContent || welcomeMessage });
                 } else {
                     const embed = new EmbedBuilder()
                         .setColor(welcomeConfig.welcomeEmbed?.color || getColor('success'))
@@ -63,43 +60,62 @@ export default {
                         )
                         .setTimestamp()
                         .setFooter({ text: embedFooter });
-                    
+
                     if (welcomeConfig.welcomeImage) {
                         embed.setImage(welcomeConfig.welcomeImage);
                     } else if (welcomeConfig.welcomeEmbed?.image?.url) {
                         embed.setImage(welcomeConfig.welcomeEmbed.image.url);
                     }
-                    
-                    await channel.send({ 
-                        content: messageContent,
-                        embeds: [embed] 
-                    });
+
+                    await channel.send({ content: messageContent, embeds: [embed] });
+                }
+            }
+        } else if (leo.welcomeEnabled && leo.welcomeChannelId) {
+            // LEO compatibility welcome system, used when the original welcome module is not enabled.
+            const channel = guild.channels.cache.get(leo.welcomeChannelId)
+                || await guild.channels.fetch(leo.welcomeChannelId).catch(() => null);
+            const me = guild.members.me;
+            const permissions = channel?.isTextBased?.() && me ? channel.permissionsFor(me) : null;
+            if (permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
+                const text = leo.welcomeText || `Welcome ${user} to **${guild.name}**!`;
+                if (permissions.has(PermissionFlagsBits.EmbedLinks)) {
+                    const embed = new EmbedBuilder()
+                        .setColor(getColor('success'))
+                        .setTitle('Welcome')
+                        .setDescription(text)
+                        .setThumbnail(user.displayAvatarURL())
+                        .addFields({ name: 'Member Count', value: String(guild.memberCount), inline: true });
+                    await channel.send({ content: user.toString(), embeds: [embed] });
+                } else {
+                    await channel.send(text);
                 }
             }
         }
-        
+
         if (welcomeConfig?.roleIds && welcomeConfig.roleIds.length > 0) {
             const delay = welcomeConfig.autoRoleDelay || 0;
             const singleRoleId = welcomeConfig.roleIds[0];
-            
+
             if (delay > 0) {
                 const timeout = setTimeout(async () => {
                     const role = guild.roles.cache.get(singleRoleId);
-                    if (role) {
-                        await assignRoleSafely(member, role);
-                    }
+                    if (role) await assignRoleSafely(member, role);
                 }, delay * 1000);
-                if (typeof timeout.unref === 'function') {
-                    timeout.unref();
-                }
+                if (typeof timeout.unref === 'function') timeout.unref();
             } else {
                 const role = guild.roles.cache.get(singleRoleId);
-                if (role) {
-                    await assignRoleSafely(member, role);
-                }
+                if (role) await assignRoleSafely(member, role);
             }
         }
-        
+
+        if (leo.joinRoleId) {
+            const joinRole = guild.roles.cache.get(leo.joinRoleId)
+                || await guild.roles.fetch(leo.joinRoleId).catch(() => null);
+            if (joinRole && !member.roles.cache.has(joinRole.id)) {
+                await assignRoleSafely(member, joinRole);
+            }
+        }
+
         if (config?.verification?.enabled || config?.verification?.autoVerify?.enabled) {
             await handleVerification(member, guild, config.verification, member.client);
         }
@@ -150,7 +166,7 @@ export default {
         } catch (error) {
             logger.debug('Error restoring birthday on member join:', error);
         }
-        
+
     } catch (error) {
         logger.error('Error in guildMemberAdd event:', error);
     }
@@ -159,10 +175,10 @@ export default {
 
 async function handleVerification(member, guild, verificationConfig, client) {
     const { autoVerifyOnJoin } = await import('../services/verificationService.js');
-    
+
     try {
         const result = await autoVerifyOnJoin(client, guild, member, verificationConfig);
-        
+
         if (result.autoVerified) {
             logger.info('User auto-verified on join', {
                 guildId: guild.id,
