@@ -45,6 +45,23 @@ export default {
 
       if (message.author?.bot) return;
 
+      // Keep one recent deleted-message snapshot per channel for .snipe.
+      try {
+        if (message.author?.id && message.channel?.id && message.client?.db?.set) {
+          await message.client.db.set(`leo:snipe:${message.guild.id}:${message.channel.id}`, {
+            messageId: message.id,
+            authorId: message.author.id,
+            authorTag: message.author.tag,
+            content: message.content || '',
+            attachments: [...message.attachments.values()].map((attachment) => attachment.url).slice(0, 10),
+            createdAt: message.createdTimestamp || null,
+            deletedAt: Date.now(),
+          }, 86400);
+        }
+      } catch (snipeError) {
+        logger.debug('Could not store LEO snipe snapshot:', snipeError);
+      }
+
       const metaLines = [
         formatLogLine('Channel', message.channel ? `${message.channel.name} ${message.channel.toString()}` : 'Unknown'),
         formatLogLine('Message ID', `\`${message.id}\``),
