@@ -1,4 +1,9 @@
-import { MessageFlags } from 'discord.js';
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  MessageFlags,
+} from 'discord.js';
 import { createEmbed } from '../../../utils/embeds.js';
 import { getHrCase, updateHrCase } from '../../../services/leo/hrService.js';
 import { getLeoGuildConfig } from '../../../services/leo/leoState.js';
@@ -12,6 +17,11 @@ export default {
       await interaction.reply({ content: 'This HR appeal is no longer available.', flags: MessageFlags.Ephemeral });
       return;
     }
+    if (record.appeal?.status === 'pending') {
+      await interaction.reply({ content: 'An appeal for this case is already pending.', flags: MessageFlags.Ephemeral });
+      return;
+    }
+
     const reason = interaction.fields.getTextInputValue('reason').trim();
     const leo = await getLeoGuildConfig(client, guildId);
     await updateHrCase(client, guildId, caseId, {
@@ -29,6 +39,16 @@ export default {
       : null;
     if (channel?.isTextBased?.()) {
       const pingRole = leo.appealPingRoleId ? `<@&${leo.appealPingRoleId}>` : null;
+      const reviewRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`leo_hr_appeal_review:${guildId}:${caseId}:approve`)
+          .setLabel('Approve Appeal')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`leo_hr_appeal_review:${guildId}:${caseId}:deny`)
+          .setLabel('Deny Appeal')
+          .setStyle(ButtonStyle.Danger),
+      );
       await channel.send({
         content: pingRole || undefined,
         embeds: [createEmbed({
@@ -36,6 +56,7 @@ export default {
           description: `<@${interaction.user.id}> appealed **${record.type}**.\n\n**Original reason:** ${record.reason}\n\n**Appeal:** ${reason}`,
           color: 'warning',
         })],
+        components: [reviewRow],
         allowedMentions: leo.appealPingRoleId ? { roles: [leo.appealPingRoleId] } : { parse: [] },
       });
     }
