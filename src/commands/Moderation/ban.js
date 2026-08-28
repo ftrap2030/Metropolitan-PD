@@ -9,7 +9,6 @@ import { createEmbed, successEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { ModerationService } from '../../services/moderation/moderationService.js';
 import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
-import { isBotOwner } from '../../config/bot.js';
 import { getLeoGuildConfig, isLeoBypassed, isProtectedUser } from '../../services/leo/leoState.js';
 import { createModerationAppeal } from '../../services/leo/moderationAppealService.js';
 
@@ -57,14 +56,14 @@ export default {
             );
         }
 
-        const bypassed = isBotOwner(interaction.user.id) || await isLeoBypassed(client, interaction.user.id);
-        if (!bypassed) {
+        const explicitlyBypassed = await isLeoBypassed(client, interaction.user.id);
+        if (!explicitlyBypassed) {
             const leo = await getLeoGuildConfig(client, interaction.guildId);
             if (isProtectedUser(leo, user.id)) {
                 throw new TitanBotError(
                     'Protected user ban blocked',
                     ErrorTypes.PERMISSION,
-                    'This user is protected from LEO ban actions.',
+                    'This user is protected from LEO ban actions. Use the bypass system explicitly before taking this action.',
                 );
             }
         }
