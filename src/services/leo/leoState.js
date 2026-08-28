@@ -5,6 +5,7 @@ const GLOBAL_KEYS = {
   botBlacklist: 'leo:global:botblacklist',
   dmLog: 'leo:global:dmlog',
   globalBlacklist: 'leo:global:blacklist',
+  serverWhitelist: 'leo:global:serverwhitelist',
 };
 
 function deepMerge(base = {}, patch = {}) {
@@ -67,11 +68,8 @@ export async function isLeoBypassed(client, userId) {
 export async function setLeoBypass(client, userId, enabled, metadata = {}) {
   const map = await getBypassMap(client);
   const id = String(userId);
-  if (enabled) {
-    map[id] = { enabled: true, ...metadata, updatedAt: new Date().toISOString() };
-  } else {
-    delete map[id];
-  }
+  if (enabled) map[id] = { enabled: true, ...metadata, updatedAt: new Date().toISOString() };
+  else delete map[id];
   await setGlobalObject(client, GLOBAL_KEYS.bypass, map);
   return map;
 }
@@ -89,11 +87,8 @@ export async function isBotBlacklisted(client, userId) {
 export async function setBotBlacklist(client, userId, enabled, metadata = {}) {
   const map = await getBotBlacklist(client);
   const id = String(userId);
-  if (enabled) {
-    map[id] = { ...metadata, updatedAt: new Date().toISOString() };
-  } else {
-    delete map[id];
-  }
+  if (enabled) map[id] = { ...metadata, updatedAt: new Date().toISOString() };
+  else delete map[id];
   await setGlobalObject(client, GLOBAL_KEYS.botBlacklist, map);
   return map;
 }
@@ -105,11 +100,8 @@ export async function getDmLogUsers(client) {
 export async function setDmLogUser(client, userId, enabled, metadata = {}) {
   const map = await getDmLogUsers(client);
   const id = String(userId);
-  if (enabled) {
-    map[id] = { ...metadata, updatedAt: new Date().toISOString() };
-  } else {
-    delete map[id];
-  }
+  if (enabled) map[id] = { ...metadata, updatedAt: new Date().toISOString() };
+  else delete map[id];
   await setGlobalObject(client, GLOBAL_KEYS.dmLog, map);
   return map;
 }
@@ -127,13 +119,32 @@ export async function isGloballyBlacklisted(client, userId) {
 export async function setGlobalBlacklist(client, userId, enabled, metadata = {}) {
   const map = await getGlobalBlacklist(client);
   const id = String(userId);
-  if (enabled) {
-    map[id] = { ...metadata, updatedAt: new Date().toISOString() };
-  } else {
-    delete map[id];
-  }
+  if (enabled) map[id] = { ...metadata, updatedAt: new Date().toISOString() };
+  else delete map[id];
   await setGlobalObject(client, GLOBAL_KEYS.globalBlacklist, map);
   return map;
+}
+
+export async function getServerWhitelist(client) {
+  return getGlobalObject(client, GLOBAL_KEYS.serverWhitelist);
+}
+
+export async function setServerWhitelisted(client, guildId, enabled, metadata = {}) {
+  const map = await getServerWhitelist(client);
+  const id = String(guildId);
+  if (enabled) map[id] = { ...metadata, updatedAt: new Date().toISOString() };
+  else delete map[id];
+  await setGlobalObject(client, GLOBAL_KEYS.serverWhitelist, map);
+  return map;
+}
+
+export async function isServerAuthorized(client, guildId) {
+  if (!guildId) return false;
+  const map = await getServerWhitelist(client);
+  const ids = Object.keys(map);
+  // Backward compatible: whitelist enforcement begins after at least one server is added.
+  if (ids.length === 0) return true;
+  return Boolean(map[String(guildId)]);
 }
 
 export function isProtectedUser(leoConfig, userId) {
