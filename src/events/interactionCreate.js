@@ -19,6 +19,13 @@ import { resolveSlashAccessKey } from '../utils/messageAdapter.js';
 import { isCollectorManagedComponent } from '../utils/collectorComponents.js';
 import { ResponseCoordinator } from '../utils/responseCoordinator.js';
 import { enforceDefaultCommandPermissions } from '../utils/permissionGuard.js';
+import {
+  getDmLogUsers,
+  isBotBlacklisted,
+  isGloballyBlacklisted,
+  isLeoBypassed,
+  isServerAuthorized,
+} from '../services/leo/leoState.js';
 
 const COMMAND_ERROR_SUBTYPES = {
   warn: 'warn_failed',
@@ -44,6 +51,20 @@ function withTraceContext(context = {}, traceContext = {}) {
     command: context.commandName || traceContext.command,
     ...context
   };
+}
+
+async function notifyUnauthorizedSlash(client, interaction) {
+  const recipients = await getDmLogUsers(client).catch(() => ({}));
+  for (const userId of Object.keys(recipients || {})) {
+    const user = await client.users.fetch(userId).catch(() => null);
+    if (!user) continue;
+    await user.send(
+      `Security alert: unauthorized server slash-command attempt.\n` +
+      `Server: ${interaction.guild?.name || 'Unknown'} (${interaction.guildId})\n` +
+      `User: ${interaction.user?.tag || 'Unknown'} (${interaction.user?.id || 'unknown'})\n` +
+      `Command: /${interaction.commandName}`
+    ).catch(() => {});
+  }
 }
 
 export default {
@@ -84,7 +105,37 @@ export default {
               );
             }
 
-            if (isMaintenanceMode() && !isBotOwner(interaction.user.id)) {
+            const bypassed = isBotOwner(interaction.user.id)
+              || await isLeoBypassed(client, interaction.user.id).catch(() => false);
+
+            if (!bypassed && interaction.guildId) {
+              const [globallyBlacklisted, botBlacklisted, serverAuthorized] = await Promise.all([
+                isGloballyBlacklisted(client, interaction.user.id),
+                isBotBlacklisted(client, interaction.user.id),
+                isServerAuthorized(client, interaction.guildId),
+              ]);
+
+              if (globallyBlacklisted || botBlacklisted) {
+                throw createError(
+                  'User is blacklisted from bot commands',
+                  ErrorTypes.PERMISSION,
+                  'You are blacklisted from using this bot.',
+                  withTraceContext({ commandName: interaction.commandName }, interactionTraceContext)
+                );
+              }
+
+              if (!serverAuthorized) {
+                await notifyUnauthorizedSlash(client, interaction);
+                throw createError(
+                  'Guild is not authorized by LEO server whitelist',
+                  ErrorTypes.PERMISSION,
+                  'This server is not authorized to use this bot.',
+                  withTraceContext({ commandName: interaction.commandName, guildId: interaction.guildId }, interactionTraceContext)
+                );
+              }
+            }
+
+            if (isMaintenanceMode() && !bypassed) {
               throw createError(
                 'Bot is in maintenance mode',
                 ErrorTypes.CONFIGURATION,
@@ -103,7 +154,7 @@ export default {
             }
 
             const defaultCooldownSec = Number(botConfig.commands?.defaultCooldown) || 0;
-            if (defaultCooldownSec > 0 && !isBotOwner(interaction.user.id)) {
+            if (defaultCooldownSec > 0 && !bypassed) {
               const cooldownKey = `${interaction.user.id}:${interaction.commandName}`;
               const expiresAt = client.cooldowns.get(cooldownKey);
 
@@ -120,29 +171,31 @@ export default {
               client.cooldowns.set(cooldownKey, Date.now() + defaultCooldownSec * 1000);
             }
 
-            const abuseProtection = await enforceAbuseProtection(interaction, command, interaction.commandName);
-            if (!abuseProtection.allowed) {
-              const formattedCooldown = formatCooldownDuration(abuseProtection.remainingMs);
-              throw createError(
-                `Risky command cooldown active for ${interaction.commandName}`,
-                ErrorTypes.RATE_LIMIT,
-                `This command is on cooldown. Please wait ${formattedCooldown} before trying again.`,
-                withTraceContext({
-                  commandName: interaction.commandName,
-                  subtype: 'command_cooldown',
-                  expected: true,
-                  cooldownMs: abuseProtection.remainingMs,
-                  cooldownWindowMs: abuseProtection.policy?.windowMs,
-                  cooldownMaxAttempts: abuseProtection.policy?.maxAttempts
-                }, interactionTraceContext)
-              );
+            if (!bypassed) {
+              const abuseProtection = await enforceAbuseProtection(interaction, command, interaction.commandName);
+              if (!abuseProtection.allowed) {
+                const formattedCooldown = formatCooldownDuration(abuseProtection.remainingMs);
+                throw createError(
+                  `Risky command cooldown active for ${interaction.commandName}`,
+                  ErrorTypes.RATE_LIMIT,
+                  `This command is on cooldown. Please wait ${formattedCooldown} before trying again.`,
+                  withTraceContext({
+                    commandName: interaction.commandName,
+                    subtype: 'command_cooldown',
+                    expected: true,
+                    cooldownMs: abuseProtection.remainingMs,
+                    cooldownWindowMs: abuseProtection.policy?.windowMs,
+                    cooldownMaxAttempts: abuseProtection.policy?.maxAttempts
+                  }, interactionTraceContext)
+                );
+              }
             }
 
             let guildConfig = null;
             if (interaction.guild) {
               guildConfig = await getGuildConfig(client, interaction.guild.id, interactionTraceContext);
               const accessKey = resolveSlashAccessKey(interaction);
-              if (!(await isCommandEnabled(client, interaction.guild.id, accessKey, command.category))) {
+              if (!bypassed && !(await isCommandEnabled(client, interaction.guild.id, accessKey, command.category))) {
                 throw createError(
                   `Command ${accessKey} is disabled in this guild`,
                   ErrorTypes.CONFIGURATION,
@@ -417,7 +470,6 @@ export default {
 
           if (!modal) {
             if (!interaction.customId.includes(':')) {
-
               return;
             }
 
