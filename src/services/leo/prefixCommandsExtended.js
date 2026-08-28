@@ -1,14 +1,19 @@
+import { isLeoGlobalProtectionCommand, handleLeoGlobalProtectionCommand } from './prefixGlobalProtectionCommands.js';
 import { isLeoCompatibilityPrefixCommand, handleLeoCompatibilityPrefixCommand } from './prefixCompatibilityCommands.js';
 import { isLeoOwnerPrefixCommand, handleLeoOwnerPrefixCommand } from './prefixOwnerCommands.js';
 import { isLeoAdminPrefixCommand, handleLeoAdminPrefixCommand } from './prefixAdminCommands.js';
 
 export function isLeoExtendedPrefixCommand(commandName) {
-  return isLeoCompatibilityPrefixCommand(commandName)
+  return isLeoGlobalProtectionCommand(commandName)
+    || isLeoCompatibilityPrefixCommand(commandName)
     || isLeoOwnerPrefixCommand(commandName)
     || isLeoAdminPrefixCommand(commandName);
 }
 
 export async function handleLeoExtendedPrefixCommand(message, commandName, args, client) {
+  if (isLeoGlobalProtectionCommand(commandName)) {
+    return handleLeoGlobalProtectionCommand(message, commandName, args, client);
+  }
   if (isLeoCompatibilityPrefixCommand(commandName)) {
     return handleLeoCompatibilityPrefixCommand(message, commandName, args, client);
   }
