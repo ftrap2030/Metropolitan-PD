@@ -33,11 +33,16 @@ export function hasRole(member, roleId) {
   return Boolean(roleId && member?.roles?.cache?.has(String(roleId)));
 }
 
+export function isExplicitAdmin(leo, userId) {
+  return Boolean(userId && Array.isArray(leo?.adminUsers) && leo.adminUsers.map(String).includes(String(userId)));
+}
+
 export async function getLeoAccessLevel(message, client, leoConfig = null) {
   if (isBotOwner(message.author.id) || await isLeoBypassed(client, message.author.id)) return 'owner';
   const leo = leoConfig || await getLeoGuildConfig(client, message.guild.id);
   if (message.guild.ownerId === message.author.id) return 'admin';
   if (message.member?.permissions?.has(PermissionFlagsBits.Administrator)) return 'admin';
+  if (isExplicitAdmin(leo, message.author.id)) return 'admin';
   if (hasRole(message.member, leo.adminRoleId)) return 'admin';
   if (hasRole(message.member, leo.roleManagerRoleId)) return 'rolemanager';
   return 'user';
@@ -77,4 +82,11 @@ export function manageableRoles(guild, botMember = guild.members.me) {
   return [...guild.roles.cache.values()]
     .filter((role) => role.id !== guild.id && !role.managed && role.position < botHighest)
     .sort((a, b) => b.position - a.position);
+}
+
+export function canAddRoleWithinLimit(guild, leo, roleId, excludeMemberId = null) {
+  const limit = Number(leo?.rankLimits?.[roleId]);
+  if (!Number.isFinite(limit) || limit <= 0) return true;
+  const holders = guild.members.cache.filter((member) => member.id !== excludeMemberId && member.roles.cache.has(roleId)).size;
+  return holders < limit;
 }
