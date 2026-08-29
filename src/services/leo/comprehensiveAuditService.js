@@ -1,3 +1,4 @@
+import { PermissionFlagsBits } from 'discord.js';
 import { getGuildConfig, updateGuildConfig } from '../config/guildConfig.js';
 import { logEvent } from '../loggingService.js';
 
@@ -39,7 +40,7 @@ export async function getUnifiedAuditStatus(client, guildId) {
 }
 
 export async function findAuditExecutor(guild, actionType, targetId = null) {
-  if (!guild?.members?.me?.permissions?.has?.('ViewAuditLog')) return null;
+  if (!guild?.members?.me?.permissions?.has?.(PermissionFlagsBits.ViewAuditLog)) return null;
   try {
     const logs = await guild.fetchAuditLogs({ type: actionType, limit: 6 });
     const now = Date.now();
