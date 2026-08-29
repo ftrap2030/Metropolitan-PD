@@ -3,9 +3,11 @@ import { isLeoCompatibilityPrefixCommand, handleLeoCompatibilityPrefixCommand } 
 import { isLeoOwnerPrefixCommand, handleLeoOwnerPrefixCommand } from './prefixOwnerCommands.js';
 import { isLeoAdminPrefixCommand, handleLeoAdminPrefixCommand } from './prefixAdminCommands.js';
 import { isDepartmentPrefixCommand, handleDepartmentPrefixCommand } from './prefixDepartmentCommands.js';
+import { isStaffOperationsPrefixCommand, handleStaffOperationsPrefixCommand } from './prefixStaffOperationsCommands.js';
 
 export function isLeoExtendedPrefixCommand(commandName) {
-  return isDepartmentPrefixCommand(commandName)
+  return isStaffOperationsPrefixCommand(commandName)
+    || isDepartmentPrefixCommand(commandName)
     || isLeoGlobalProtectionCommand(commandName)
     || isLeoCompatibilityPrefixCommand(commandName)
     || isLeoOwnerPrefixCommand(commandName)
@@ -13,6 +15,9 @@ export function isLeoExtendedPrefixCommand(commandName) {
 }
 
 export async function handleLeoExtendedPrefixCommand(message, commandName, args, client) {
+  if (isStaffOperationsPrefixCommand(commandName)) {
+    return handleStaffOperationsPrefixCommand(message, commandName, args, client);
+  }
   if (isDepartmentPrefixCommand(commandName)) {
     return handleDepartmentPrefixCommand(message, commandName, args, client);
   }
