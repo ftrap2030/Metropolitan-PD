@@ -4,14 +4,16 @@ import {
   getActiveRidealongForUser,
   startRidealong,
 } from '../../services/leo/trainingService.js';
-import { replyInfo, replySuccess, requireSlashLevel } from '../../services/leo/slashUtils.js';
+import { replyInfo, replySuccess } from '../../services/leo/slashUtils.js';
+import { postTrainingLog, requireTrainerAccess, requireTrainingChannel } from '../../services/leo/staffOperationsAccess.js';
 
 function label(result) {
   return result === 'passed' ? 'PASSED' : result === 'failed' ? 'FAILED' : 'IN PROGRESS';
 }
 
 async function start(interaction, client) {
-  if (!(await requireSlashLevel(interaction, client, 'rolemanager'))) return;
+  if (!(await requireTrainerAccess(interaction, client))) return;
+  if (!(await requireTrainingChannel(interaction, client))) return;
   const user = interaction.options.getUser('user', true);
   const notes = interaction.options.getString('notes', false)?.trim() || null;
   const result = await startRidealong(client, interaction.guildId, user.id, interaction.user.id, notes);
@@ -31,6 +33,13 @@ async function start(interaction, client) {
     `${notes ? `\nTrainer notes: ${notes}` : ''}`
   ).catch(() => {});
 
+  await postTrainingLog(
+    interaction,
+    client,
+    'Ride-Along Started',
+    `Trainee: <@${user.id}>\nTrainer: <@${interaction.user.id}>\nRecord: **#${result.record.id}**${notes ? `\nNotes: ${notes}` : ''}`,
+  );
+
   await replySuccess(
     interaction,
     'Ride-Along Started',
@@ -40,7 +49,8 @@ async function start(interaction, client) {
 }
 
 async function complete(interaction, client) {
-  if (!(await requireSlashLevel(interaction, client, 'rolemanager'))) return;
+  if (!(await requireTrainerAccess(interaction, client))) return;
+  if (!(await requireTrainingChannel(interaction, client))) return;
   const user = interaction.options.getUser('user', true);
   const finalResult = interaction.options.getString('result', true);
   const notes = interaction.options.getString('notes', false)?.trim() || null;
@@ -67,6 +77,13 @@ async function complete(interaction, client) {
     `Your ride-along **#${result.record.id}** in **${interaction.guild.name}** was completed as **${label(finalResult)}**.` +
     `${notes ? `\nTrainer notes: ${notes}` : ''}`
   ).catch(() => {});
+
+  await postTrainingLog(
+    interaction,
+    client,
+    `Ride-Along ${label(finalResult)}`,
+    `Trainee: <@${user.id}>\nCompleted by: <@${interaction.user.id}>\nRecord: **#${result.record.id}**${notes ? `\nNotes: ${notes}` : ''}`,
+  );
 
   await replySuccess(
     interaction,
