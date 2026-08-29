@@ -91,6 +91,7 @@ async function verifySlashCommands() {
     'morph','whitelist-server','unwhitelist-server','alertrole','status','note','listnote',
     'ask','closerequest','switchpanel','unclaim','add','remove','rename','embed','embedv2',
     'setserverbio','banner','shift','shiftstats','shiftleaderboard','loa','callsign','callsigns',
+    'training','ridealong',
   ];
   for (const name of required) assert(names.has(name), `missing required LEO slash command /${name}`);
   return names.size;
@@ -137,6 +138,7 @@ async function verifyPersistence() {
   const hr = await importFile(join(ROOT, 'src/services/leo/hrService.js'));
   const appeals = await importFile(join(ROOT, 'src/services/leo/moderationAppealService.js'));
   const department = await importFile(join(ROOT, 'src/services/leo/departmentManagementService.js'));
+  const training = await importFile(join(ROOT, 'src/services/leo/trainingService.js'));
 
   await leoState.patchLeoGuildConfig(client, 'guild1', {
     adminUsers: ['100'],
@@ -192,6 +194,20 @@ async function verifyPersistence() {
   assert.equal(callsigns['500'], '1A-12');
   const duplicate = await department.setCallsign(client, 'guild1', '501', '1a-12');
   assert.equal(duplicate.reason, 'duplicate');
+
+  const passedTraining = await training.addTrainingResult(client, 'guild1', {
+    traineeId: '500', trainerId: '100', program: 'Moderator Basics', result: 'passed', notes: 'Good work',
+  });
+  assert.equal(passedTraining.result, 'passed');
+  assert.equal((await training.getTrainingHistory(client, 'guild1', '500')).length, 1);
+
+  const ridealong = await training.startRidealong(client, 'guild1', '500', '100', 'Verification ride along');
+  assert.equal(ridealong.ok, true);
+  assert.equal((await training.getActiveRidealongForUser(client, 'guild1', '500')).result, 'in_progress');
+  const completedRidealong = await training.completeRidealong(client, 'guild1', '500', '100', 'passed', 'Passed verification');
+  assert.equal(completedRidealong.ok, true);
+  assert.equal(completedRidealong.record.result, 'passed');
+  assert.equal((await training.getTrainingHistory(client, 'guild1', '500')).length, 2);
 }
 
 async function verifyGlobalCommandLimit() {
