@@ -1,7 +1,13 @@
 import { MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { addTrainingResult, getTrainingHistory } from '../../services/leo/trainingService.js';
-import { getSlashLeoAccessLevel, replyInfo, replySuccess, requireSlashLevel } from '../../services/leo/slashUtils.js';
-import { levelAtLeast } from '../../services/leo/commandUtils.js';
+import { replyInfo, replySuccess } from '../../services/leo/slashUtils.js';
+import { resolveTrainingType } from '../../services/leo/staffOperationsService.js';
+import {
+  canTrainInteraction,
+  postTrainingLog,
+  requireTrainerAccess,
+  requireTrainingChannel,
+} from '../../services/leo/staffOperationsAccess.js';
 
 function resultLabel(result) {
   return result === 'passed' ? 'PASSED' : result === 'failed' ? 'FAILED' : 'IN PROGRESS';
@@ -19,9 +25,19 @@ function formatRecord(record) {
 }
 
 async function recordResult(interaction, client, result) {
-  if (!(await requireSlashLevel(interaction, client, 'rolemanager'))) return;
+  if (!(await requireTrainerAccess(interaction, client))) return;
+  if (!(await requireTrainingChannel(interaction, client))) return;
   const user = interaction.options.getUser('user', true);
-  const program = interaction.options.getString('program', true).trim();
+  const requestedProgram = interaction.options.getString('program', true).trim();
+  const resolved = await resolveTrainingType(client, interaction.guildId, requestedProgram);
+  if (!resolved.ok) {
+    await interaction.reply({
+      content: `That training program is not configured. Available programs: ${resolved.types.map((name) => `**${name}**`).join(', ')}`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  const program = resolved.name || requestedProgram;
   const notes = result === 'failed'
     ? interaction.options.getString('reason', true).trim()
     : interaction.options.getString('notes', false)?.trim() || null;
@@ -40,6 +56,13 @@ async function recordResult(interaction, client, result) {
     `${notes ? `\nNotes: ${notes}` : ''}`
   ).catch(() => {});
 
+  await postTrainingLog(
+    interaction,
+    client,
+    `Training ${resultLabel(result)}`,
+    `Trainee: <@${user.id}>\nTrainer: <@${interaction.user.id}>\nProgram: **${record.program}**\nRecord: **#${record.id}**${notes ? `\nNotes: ${notes}` : ''}`,
+  );
+
   await replySuccess(
     interaction,
     `Training ${result === 'passed' ? 'Passed' : 'Failed'}`,
@@ -50,12 +73,9 @@ async function recordResult(interaction, client, result) {
 
 async function history(interaction, client) {
   const target = interaction.options.getUser('user', false) || interaction.user;
-  if (target.id !== interaction.user.id) {
-    const level = await getSlashLeoAccessLevel(interaction, client);
-    if (!levelAtLeast(level, 'rolemanager')) {
-      await interaction.reply({ content: 'You can only view your own training history.', flags: MessageFlags.Ephemeral });
-      return;
-    }
+  if (target.id !== interaction.user.id && !(await canTrainInteraction(interaction, client))) {
+    await interaction.reply({ content: 'You can only view your own training history.', flags: MessageFlags.Ephemeral });
+    return;
   }
 
   const limit = interaction.options.getInteger('limit', false) || 10;
@@ -77,13 +97,13 @@ export default {
       .setName('pass')
       .setDescription('Record a passed training')
       .addUserOption((o) => o.setName('user').setDescription('Trainee').setRequired(true))
-      .addStringOption((o) => o.setName('program').setDescription('Training name or program').setRequired(true).setMaxLength(100))
+      .addStringOption((o) => o.setName('program').setDescription('Configured training program').setRequired(true).setMaxLength(100))
       .addStringOption((o) => o.setName('notes').setDescription('Optional trainer notes').setRequired(false).setMaxLength(1000)))
     .addSubcommand((sub) => sub
       .setName('fail')
       .setDescription('Record a failed training')
       .addUserOption((o) => o.setName('user').setDescription('Trainee').setRequired(true))
-      .addStringOption((o) => o.setName('program').setDescription('Training name or program').setRequired(true).setMaxLength(100))
+      .addStringOption((o) => o.setName('program').setDescription('Configured training program').setRequired(true).setMaxLength(100))
       .addStringOption((o) => o.setName('reason').setDescription('Reason the training was failed').setRequired(true).setMaxLength(1000)))
     .addSubcommand((sub) => sub
       .setName('history')
