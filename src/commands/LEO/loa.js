@@ -17,6 +17,11 @@ function statusLabel(status) {
   }[status] || status;
 }
 
+function clip(value, max = 160) {
+  const text = String(value || '');
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 async function requestLoa(interaction, client) {
   const reason = interaction.options.getString('reason', true).trim();
   const returnDate = interaction.options.getString('return_date', true).trim();
@@ -87,14 +92,14 @@ async function list(interaction, client) {
       return record.status === filter;
     })
     .sort((a, b) => Number(b.createdAt) - Number(a.createdAt))
-    .slice(0, 20);
+    .slice(0, 8);
 
   const description = records.length
     ? records.map((record) => [
       `**#${record.id} — ${statusLabel(record.status)}** — <@${record.userId}>`,
       `Return: **${record.returnDate}**`,
-      `Reason: ${record.reason}`,
-      record.reviewedBy ? `Reviewed by: <@${record.reviewedBy}>${record.reviewNote ? ` — ${record.reviewNote}` : ''}` : null,
+      `Reason: ${clip(record.reason)}`,
+      record.reviewedBy ? `Reviewed by: <@${record.reviewedBy}>${record.reviewNote ? ` — ${clip(record.reviewNote)}` : ''}` : null,
     ].filter(Boolean).join('\n')).join('\n\n')
     : `No LOA records match **${filter}**.`;
 
