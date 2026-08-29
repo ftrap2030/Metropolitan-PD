@@ -1,11 +1,13 @@
+import { PermissionFlagsBits } from 'discord.js';
 import { getLeoGuildConfig, patchLeoGuildConfig } from './leoState.js';
 import { requireLevel, resolveChannel, resolveRole, sendLeoEmbed, sendSuccess } from './commandUtils.js';
 import { formatDuration } from './departmentManagementService.js';
 import { endPatrolSession, getActiveSession, startPatrolSession } from './staffOperationsService.js';
 import { canHostSessionMessage } from './staffOperationsAccess.js';
+import { configureUnifiedAuditLog, getUnifiedAuditStatus } from './comprehensiveAuditService.js';
 
 const COMMANDS = new Set([
-  'sessionrole', 'session', 'trainerrole', 'trainingchannel', 'traininglog', 'bolorole',
+  'sessionrole', 'session', 'trainerrole', 'trainingchannel', 'traininglog', 'bolorole', 'auditlog',
 ]);
 
 async function configureRole(message, client, key, label, raw) {
@@ -44,6 +46,49 @@ async function trainingChannel(message, client, args) {
 
 async function trainingLog(message, client, args) {
   return configureChannel(message, client, 'trainingLogChannelId', 'Training Log Channel', args[0]);
+}
+
+async function auditLog(message, client, args) {
+  if (!(await requireLevel(message, client, 'admin'))) return;
+  const first = String(args[0] || '').toLowerCase();
+
+  if (first === 'status') {
+    const status = await getUnifiedAuditStatus(client, message.guild.id);
+    const permission = message.guild.members.me?.permissions?.has(PermissionFlagsBits.ViewAuditLog);
+    await sendLeoEmbed(
+      message,
+      'Unified Audit Log Status',
+      `Enabled: **${status.enabled ? 'Yes' : 'No'}**\n` +
+      `One-channel mode: **${status.unified ? 'Yes' : 'No'}**\n` +
+      `Channel: ${status.channelId ? `<#${status.channelId}>` : '**Not configured**'}\n` +
+      `View Audit Log permission: **${permission ? 'Yes' : 'No'}**`,
+    );
+    return;
+  }
+
+  if (first === 'off' || first === 'disable') {
+    await configureUnifiedAuditLog(client, message.guild.id, null);
+    await sendSuccess(message, 'Unified Audit Log Disabled', 'Comprehensive server audit logging is now disabled.');
+    return;
+  }
+
+  const rawChannel = first === 'on' || first === 'enable' ? args[1] : args[0];
+  const channel = await resolveChannel(message.guild, rawChannel);
+  if (!channel?.isTextBased?.()) {
+    await message.reply('Usage: `.auditlog #channel`, `.auditlog status`, or `.auditlog off`.').catch(() => {});
+    return;
+  }
+
+  await configureUnifiedAuditLog(client, message.guild.id, channel.id);
+  const hasAuditPermission = message.guild.members.me?.permissions?.has(PermissionFlagsBits.ViewAuditLog);
+  await sendSuccess(
+    message,
+    'Unified Audit Log Enabled',
+    `All bot logs, applications, reports, Discord Audit Log actions, voice activity, profile changes, and bot command usage will be sent to ${channel}.` +
+      (hasAuditPermission
+        ? ''
+        : '\n\n**Important:** Give the bot the **View Audit Log** permission so it can record who performed Discord administrative actions.'),
+  );
 }
 
 async function session(message, client, args) {
@@ -145,6 +190,7 @@ export async function handleStaffOperationsPrefixCommand(message, commandName, a
     else if (name === 'trainingchannel') await trainingChannel(message, client, args);
     else if (name === 'traininglog') await trainingLog(message, client, args);
     else if (name === 'bolorole') await boloRole(message, client, args);
+    else if (name === 'auditlog') await auditLog(message, client, args);
     return true;
   } catch (error) {
     await sendLeoEmbed(message, 'Command Failed', error.message || 'The staff operations command failed.', 'error').catch(() => {});
