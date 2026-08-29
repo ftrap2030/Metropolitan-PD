@@ -48,6 +48,21 @@ async function trainingLog(message, client, args) {
 
 async function session(message, client, args) {
   const action = String(args[0] || '').toLowerCase();
+  if (!['start', 'end', 'status'].includes(action)) {
+    await message.reply('Usage: `.session start [name]`, `.session end`, or `.session status`.').catch(() => {});
+    return;
+  }
+
+  if (!(await canHostSessionMessage(message, client))) {
+    const leo = await getLeoGuildConfig(client, message.guild.id);
+    await message.reply(
+      leo.sessionHostRoleId
+        ? `You need <@&${leo.sessionHostRoleId}> or Admin access to use patrol session commands.`
+        : 'No patrol session role is configured. An Admin can set one with `.sessionrole @role`.'
+    ).catch(() => {});
+    return;
+  }
+
   if (action === 'status') {
     const active = await getActiveSession(client, message.guild.id);
     if (!active) {
@@ -59,21 +74,6 @@ async function session(message, client, args) {
       `Patrol Session #${active.id}`,
       `**${active.name}**\nHost: <@${active.hostId}>\nStarted: <t:${Math.floor(active.startedAt / 1000)}:R>`,
     );
-    return;
-  }
-
-  if (!['start', 'end'].includes(action)) {
-    await message.reply('Usage: `.session start [name]`, `.session end`, or `.session status`.').catch(() => {});
-    return;
-  }
-
-  if (!(await canHostSessionMessage(message, client))) {
-    const leo = await getLeoGuildConfig(client, message.guild.id);
-    await message.reply(
-      leo.sessionHostRoleId
-        ? `You need <@&${leo.sessionHostRoleId}> or Admin access to host patrol sessions.`
-        : 'No patrol session host role is configured. An Admin can set one with `.sessionrole @role`.'
-    ).catch(() => {});
     return;
   }
 
