@@ -15,6 +15,25 @@ export async function canHostSessionMessage(message, client) {
   return Boolean(leo.sessionHostRoleId && message.member?.roles?.cache?.has(String(leo.sessionHostRoleId)));
 }
 
+export async function canUseSessionInteraction(interaction, client) {
+  const leo = await getLeoGuildConfig(client, interaction.guildId);
+  const level = await getSlashLeoAccessLevel(interaction, client, leo);
+  if (levelAtLeast(level, 'admin')) return true;
+  return Boolean(leo.sessionHostRoleId && interaction.member?.roles?.cache?.has(String(leo.sessionHostRoleId)));
+}
+
+export async function requireSessionAccess(interaction, client) {
+  if (await canUseSessionInteraction(interaction, client)) return true;
+  const leo = await getLeoGuildConfig(client, interaction.guildId);
+  await interaction.reply({
+    content: leo.sessionHostRoleId
+      ? `You need <@&${leo.sessionHostRoleId}> or Admin access to use patrol session commands.`
+      : 'No patrol session role is configured. An Admin can set one with `.sessionrole @role`.',
+    flags: MessageFlags.Ephemeral,
+  }).catch(() => {});
+  return false;
+}
+
 export async function canTrainInteraction(interaction, client) {
   const leo = await getLeoGuildConfig(client, interaction.guildId);
   const level = await getSlashLeoAccessLevel(interaction, client, leo);
