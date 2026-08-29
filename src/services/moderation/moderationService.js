@@ -4,6 +4,8 @@ import { PermissionFlagsBits } from 'discord.js';
 import { logger } from '../../utils/logger.js';
 import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { logModerationAction } from '../../utils/moderation.js';
+import { isBotOwner } from '../../config/bot.js';
+import { isLeoBypassed } from '../leo/leoState.js';
 
 function getTargetLabel(target) {
   return target.user?.tag ?? target.displayName ?? 'this user';
@@ -120,16 +122,35 @@ export class ModerationService {
     return { valid: true };
   }
 
-  static assertModerationHierarchy(moderator, target, action) {
+  static assertBotHierarchy(target, action) {
     const botCheck = this.validateBotHierarchy(target, action);
     if (!botCheck.valid) {
       throw new TitanBotError(botCheck.error, ErrorTypes.PERMISSION, botCheck.error);
     }
+  }
 
+  static assertModerationHierarchy(moderator, target, action) {
+    this.assertBotHierarchy(target, action);
     const modCheck = this.validateHierarchy(moderator, target, action);
     if (!modCheck.valid) {
       throw new TitanBotError(modCheck.error, ErrorTypes.PERMISSION, modCheck.error);
     }
+  }
+
+  static async hasLeoHierarchyBypass(guild, moderator) {
+    if (!guild || !moderator?.id) return false;
+    if (isBotOwner(moderator.id)) return true;
+    return isLeoBypassed(guild.client, moderator.id).catch(() => false);
+  }
+
+  static async assertHierarchyForAction(guild, moderator, target, action) {
+    if (await this.hasLeoHierarchyBypass(guild, moderator)) {
+      // LEO bypass skips moderator/user hierarchy checks, but cannot override the
+      // Discord-enforced hierarchy of the bot's own highest role.
+      this.assertBotHierarchy(target, action);
+      return;
+    }
+    this.assertModerationHierarchy(moderator, target, action);
   }
 
   static async banUser({
@@ -148,6 +169,7 @@ export class ModerationService {
         );
       }
 
+      const bypassHierarchy = await this.hasLeoHierarchyBypass(guild, moderator);
       let targetMember = null;
       try {
         targetMember = await guild.members.fetch(user.id).catch(() => null);
@@ -156,21 +178,21 @@ export class ModerationService {
       }
 
       if (targetMember) {
-        this.assertModerationHierarchy(moderator, targetMember, 'ban');
-      } else {
-
+        if (bypassHierarchy) this.assertBotHierarchy(targetMember, 'ban');
+        else this.assertModerationHierarchy(moderator, targetMember, 'ban');
+      } else if (!bypassHierarchy) {
         const isOwner = guild.ownerId === moderator.id;
         const hasHighPerms = moderator.permissions.has([
-            PermissionFlagsBits.ManageGuild,
-            PermissionFlagsBits.Administrator
+          PermissionFlagsBits.ManageGuild,
+          PermissionFlagsBits.Administrator
         ]);
 
         if (!isOwner && !hasHighPerms) {
-            throw new TitanBotError(
-                'You do not have sufficient permissions to ban users who are not in the server.',
-                ErrorTypes.PERMISSION,
-                'You need "Manage Server" or "Administrator" permissions to ban users not currently in the guild.'
-            );
+          throw new TitanBotError(
+            'You do not have sufficient permissions to ban users who are not in the server.',
+            ErrorTypes.PERMISSION,
+            'You need "Manage Server" or "Administrator" permissions to ban users not currently in the guild.'
+          );
         }
       }
 
@@ -194,12 +216,7 @@ export class ModerationService {
       });
 
       logger.info(`User banned: ${user.tag} by ${moderator.user.tag} in ${guild.name}`);
-      
-      return {
-        caseId,
-        user: user.tag,
-        reason
-      };
+      return { caseId, user: user.tag, reason };
     } catch (error) {
       logger.error('Error banning user:', error);
       throw error;
@@ -221,7 +238,7 @@ export class ModerationService {
         );
       }
 
-      this.assertModerationHierarchy(moderator, member, 'kick');
+      await this.assertHierarchyForAction(guild, moderator, member, 'kick');
 
       if (!member.kickable) {
         const targetLabel = getTargetLabel(member);
@@ -251,12 +268,7 @@ export class ModerationService {
       });
 
       logger.info(`User kicked: ${member.user.tag} by ${moderator.user.tag} in ${guild.name}`);
-      
-      return {
-        caseId,
-        user: member.user.tag,
-        reason
-      };
+      return { caseId, user: member.user.tag, reason };
     } catch (error) {
       logger.error('Error kicking user:', error);
       throw error;
@@ -279,7 +291,7 @@ export class ModerationService {
         );
       }
 
-      this.assertModerationHierarchy(moderator, member, 'timeout');
+      await this.assertHierarchyForAction(guild, moderator, member, 'timeout');
 
       if (!member.moderatable) {
         const targetLabel = getTargetLabel(member);
@@ -312,13 +324,7 @@ export class ModerationService {
       });
 
       logger.info(`User timed out: ${member.user.tag} by ${moderator.user.tag} in ${guild.name}`);
-      
-      return {
-        caseId,
-        user: member.user.tag,
-        duration: durationMinutes,
-        reason
-      };
+      return { caseId, user: member.user.tag, duration: durationMinutes, reason };
     } catch (error) {
       logger.error('Error timing out user:', error);
       throw error;
@@ -340,7 +346,7 @@ export class ModerationService {
         );
       }
 
-      this.assertModerationHierarchy(moderator, member, 'remove the timeout from');
+      await this.assertHierarchyForAction(guild, moderator, member, 'remove the timeout from');
 
       if (!member.moderatable) {
         const targetLabel = getTargetLabel(member);
@@ -378,10 +384,7 @@ export class ModerationService {
       });
 
       logger.info(`Timeout removed: ${member.user.tag} by ${moderator.user.tag} in ${guild.name}`);
-      
-      return {
-        user: member.user.tag
-      };
+      return { user: member.user.tag };
     } catch (error) {
       logger.error('Error removing timeout:', error);
       throw error;
@@ -432,12 +435,7 @@ export class ModerationService {
       });
 
       logger.info(`User unbanned: ${user.tag} by ${moderator.user.tag} in ${guild.name}`);
-      
-      return {
-        caseId,
-        user: user.tag,
-        reason
-      };
+      return { caseId, user: user.tag, reason };
     } catch (error) {
       logger.error('Error unbanning user:', error);
       throw error;
