@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { getSessionHistory } from '../../services/leo/staffOperationsService.js';
 import { formatDuration } from '../../services/leo/departmentManagementService.js';
+import { requireSessionAccess } from '../../services/leo/staffOperationsAccess.js';
 import { replyInfo } from '../../services/leo/slashUtils.js';
 
 export default {
@@ -12,6 +13,7 @@ export default {
     .setDMPermission(false)
     .addIntegerOption((o) => o.setName('limit').setDescription('Sessions to show').setRequired(false).setMinValue(1).setMaxValue(20)),
   async execute(interaction, config, client) {
+    if (!(await requireSessionAccess(interaction, client))) return;
     const limit = interaction.options.getInteger('limit', false) || 10;
     const records = await getSessionHistory(client, interaction.guildId, limit);
     const description = records.length
