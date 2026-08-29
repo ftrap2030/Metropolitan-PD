@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { getActiveSession } from '../../services/leo/staffOperationsService.js';
 import { formatDuration } from '../../services/leo/departmentManagementService.js';
+import { requireSessionAccess } from '../../services/leo/staffOperationsAccess.js';
 import { replyInfo } from '../../services/leo/slashUtils.js';
 
 export default {
@@ -11,6 +12,7 @@ export default {
     .setDescription('Show the active patrol session')
     .setDMPermission(false),
   async execute(interaction, config, client) {
+    if (!(await requireSessionAccess(interaction, client))) return;
     const record = await getActiveSession(client, interaction.guildId);
     if (!record) {
       await replyInfo(interaction, 'Patrol Session', 'There is no active patrol session.', true);
