@@ -90,7 +90,7 @@ async function verifySlashCommands() {
     'casenote','casenotes','case','adminlist','giverole','removerole','coc','ranklimit',
     'morph','whitelist-server','unwhitelist-server','alertrole','status','note','listnote',
     'ask','closerequest','switchpanel','unclaim','add','remove','rename','embed','embedv2',
-    'setserverbio','banner',
+    'setserverbio','banner','shift','shiftstats','shiftleaderboard','loa','callsign','callsigns',
   ];
   for (const name of required) assert(names.has(name), `missing required LEO slash command /${name}`);
   return names.size;
@@ -111,6 +111,7 @@ async function verifyPrefixRouting() {
     'retirementchannel','prefix','role','renamerole','sendcoc','unmorph','detain','release','setstatus',
     'delete','snipe','alert','lookup','robloxgroup','robloxlink','appealchannel','appealping','status',
     'selfunban','update','protect','unprotect','protects','farestime','fedetime',
+    'onduty','offduty','callsign',
   ];
   for (const name of requiredDotCommands) {
     const routed = base.isLeoPrefixCommand(name) || extended.isLeoExtendedPrefixCommand(name);
@@ -135,6 +136,7 @@ async function verifyPersistence() {
   const leoState = await importFile(join(ROOT, 'src/services/leo/leoState.js'));
   const hr = await importFile(join(ROOT, 'src/services/leo/hrService.js'));
   const appeals = await importFile(join(ROOT, 'src/services/leo/moderationAppealService.js'));
+  const department = await importFile(join(ROOT, 'src/services/leo/departmentManagementService.js'));
 
   await leoState.patchLeoGuildConfig(client, 'guild1', {
     adminUsers: ['100'],
@@ -170,6 +172,26 @@ async function verifyPersistence() {
   assert.equal(appeal.id, '0001');
   const updatedAppeal = await appeals.updateModerationAppeal(client, 'guild1', appeal.id, { status: 'approved' });
   assert.equal(updatedAppeal.status, 'approved');
+
+  const started = await department.startShift(client, 'guild1', '500');
+  assert.equal(started.ok, true);
+  assert.equal((await department.getShiftSummary(client, 'guild1', '500')).active, true);
+  const stopped = await department.endShift(client, 'guild1', '500');
+  assert.equal(stopped.ok, true);
+  assert.equal((await department.getShiftSummary(client, 'guild1', '500')).shiftsCompleted, 1);
+
+  const loa = await department.createLoaRequest(client, 'guild1', '500', 'Verification leave', '2099-12-31');
+  assert.equal(loa.ok, true);
+  const reviewedLoa = await department.reviewLoa(client, 'guild1', loa.record.id, '100', 'approved', 'Approved in verification');
+  assert.equal(reviewedLoa.record.status, 'approved');
+  const endedLoa = await department.endLoa(client, 'guild1', '500', loa.record.id);
+  assert.equal(endedLoa.record.status, 'ended');
+
+  assert.equal((await department.setCallsign(client, 'guild1', '500', '1A-12')).ok, true);
+  const callsigns = await department.getCallsigns(client, 'guild1');
+  assert.equal(callsigns['500'], '1A-12');
+  const duplicate = await department.setCallsign(client, 'guild1', '501', '1a-12');
+  assert.equal(duplicate.reason, 'duplicate');
 }
 
 async function verifyGlobalCommandLimit() {
