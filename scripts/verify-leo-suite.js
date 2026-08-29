@@ -91,7 +91,8 @@ async function verifySlashCommands() {
     'morph','whitelist-server','unwhitelist-server','alertrole','status','note','listnote',
     'ask','closerequest','switchpanel','unclaim','add','remove','rename','embed','embedv2',
     'setserverbio','banner','shift','shiftstats','shiftleaderboard','loa','callsign','callsigns',
-    'training','ridealong',
+    'training','ridealong','staffprofile','session','sessionhistory','trainingtype','certify',
+    'decertify','certifications','bolo',
   ];
   for (const name of required) assert(names.has(name), `missing required LEO slash command /${name}`);
   return names.size;
@@ -112,7 +113,7 @@ async function verifyPrefixRouting() {
     'retirementchannel','prefix','role','renamerole','sendcoc','unmorph','detain','release','setstatus',
     'delete','snipe','alert','lookup','robloxgroup','robloxlink','appealchannel','appealping','status',
     'selfunban','update','protect','unprotect','protects','farestime','fedetime',
-    'onduty','offduty','callsign',
+    'onduty','offduty','callsign','sessionrole','session','trainerrole','trainingchannel','traininglog','bolorole',
   ];
   for (const name of requiredDotCommands) {
     const routed = base.isLeoPrefixCommand(name) || extended.isLeoExtendedPrefixCommand(name);
@@ -139,6 +140,7 @@ async function verifyPersistence() {
   const appeals = await importFile(join(ROOT, 'src/services/leo/moderationAppealService.js'));
   const department = await importFile(join(ROOT, 'src/services/leo/departmentManagementService.js'));
   const training = await importFile(join(ROOT, 'src/services/leo/trainingService.js'));
+  const operations = await importFile(join(ROOT, 'src/services/leo/staffOperationsService.js'));
 
   await leoState.patchLeoGuildConfig(client, 'guild1', {
     adminUsers: ['100'],
@@ -208,6 +210,33 @@ async function verifyPersistence() {
   assert.equal(completedRidealong.ok, true);
   assert.equal(completedRidealong.record.result, 'passed');
   assert.equal((await training.getTrainingHistory(client, 'guild1', '500')).length, 2);
+
+  const patrol = await operations.startPatrolSession(client, 'guild1', '100', 'Night Patrol');
+  assert.equal(patrol.ok, true);
+  assert.equal((await operations.getActiveSession(client, 'guild1')).name, 'Night Patrol');
+  const patrolEnded = await operations.endPatrolSession(client, 'guild1', '100');
+  assert.equal(patrolEnded.ok, true);
+  assert.equal((await operations.getSessionHistory(client, 'guild1', 5)).length, 1);
+
+  assert.equal((await operations.addTrainingType(client, 'guild1', 'Basic Training')).ok, true);
+  assert.equal((await operations.resolveTrainingType(client, 'guild1', 'basic training')).name, 'Basic Training');
+  assert.equal((await operations.resolveTrainingType(client, 'guild1', 'Unknown')).reason, 'not_configured');
+
+  const certificate = await operations.issueCertification(client, 'guild1', {
+    userId: '500', certification: 'FTO', issuedBy: '100', expiresOn: '2099-12-31', notes: 'Verification',
+  });
+  assert.equal(certificate.ok, true);
+  assert.equal((await operations.getUserCertifications(client, 'guild1', '500')).length, 1);
+  assert.equal((await operations.revokeCertification(client, 'guild1', '500', 'FTO', '100', 'Verification complete')).ok, true);
+  assert.equal((await operations.getUserCertifications(client, 'guild1', '500')).length, 0);
+
+  const bolo = await operations.addBolo(client, 'guild1', {
+    type: 'vehicle', subject: 'Black sedan', details: 'Verification BOLO', createdBy: '100', expiresHours: 24,
+  });
+  assert.equal(bolo.ok, true);
+  assert.equal((await operations.getActiveBolos(client, 'guild1')).length, 1);
+  assert.equal((await operations.removeBolo(client, 'guild1', bolo.record.id, '100')).ok, true);
+  assert.equal((await operations.getActiveBolos(client, 'guild1')).length, 0);
 }
 
 async function verifyGlobalCommandLimit() {
