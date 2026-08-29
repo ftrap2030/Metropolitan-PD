@@ -1,5 +1,6 @@
 import { Events } from 'discord.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
+import { findAuditExecutor, executorLines } from '../services/leo/comprehensiveAuditService.js';
 import { logger } from '../utils/logger.js';
 import { buildRoleAuditLines } from '../utils/logging/logEmbeds.js';
 
@@ -11,7 +12,8 @@ export default {
     try {
       if (!role.guild) return;
 
-      const lines = buildRoleAuditLines(role, { includeMemberCount: true });
+      const executor = await findAuditExecutor(role.guild, 32, role.id);
+      const lines = [...buildRoleAuditLines(role, { includeMemberCount: true }), ...executorLines(executor)];
 
       await logEvent({
         client: role.client,
